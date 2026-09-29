@@ -5,11 +5,11 @@
 const C = LOGIC;
 
 // ---------- 모양 ----------
-const W = 400, H = 760;
+const W = 400, H = 800;
 const INK = '#3b2416';
 const FONT = '"Jua", "Apple SD Gothic Neo", sans-serif';
 const EMOJI = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
-const Y_TICKETS = 80, Y_KETTLE = 178, Y_TABS = 246, Y_PANEL = 314, PANEL_H = 392, Y_BOOK = 712;
+const Y_TICKETS = 80, Y_COUNTER = 204, Y_KETTLE = 232, Y_TABS = 296, Y_PANEL = 358, PANEL_H = 392, Y_BOOK = 756;
 
 const SHORT = { hot: ['핫'], ice: ['아이스'], hotLight: ['핫', '라이트'], hotDark: ['핫', '다크'], iceDark: ['아이스', '다크'], hotLarge: ['핫', '라지'], iceLarge: ['아이스', '라지'] };
 const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪'];
@@ -90,7 +90,7 @@ let clock = 0;
 
 function startGame() {
   g = C.newGame(Math.random);
-  focus = 0; texts = []; particles = []; banner = null; holds.clear();
+  focus = 0; texts = []; particles = []; banner = null; holds.clear(); crowd.clear();
   state = 'play';
   hideOverlay();
   updateHud();
@@ -102,7 +102,7 @@ const qWord = (q) => (q >= 0.95 ? ['완벽!', '#8fe0b0'] : q >= 0.7 ? ['좋아�
 function say(text, x, y, color = '#fff', size = 22) { texts.push({ text, x, y, t: 0, color, size }); }
 function tabRect(si) {
   const n = g.stations.length, gap = 8, w = (380 - (n - 1) * gap) / n;
-  return { x: 10 + si * (w + gap), y: Y_TABS, w, h: 62 };
+  return { x: 10 + si * (w + gap), y: Y_TABS, w, h: 56 };
 }
 
 function handleEvents() {
@@ -114,13 +114,14 @@ function handleEvents() {
       const [w, col] = qWord(e.q); say(w, W / 2, Y_PANEL + 60, col, 30);
       (e.q >= 0.7 ? sfx.good : sfx.bad)();
     } else if (e.type === 'served') {
+      customerLeaves(e.order, true);
       const r = tabRect(e.station);
       say(`+${e.coins.toLocaleString()}`, r.x + r.w / 2, r.y + 20, P.butter, 24);
       say('⭐'.repeat(e.stars), r.x + r.w / 2, r.y + 46, '#fff', 20);
       for (let i = 0; i < 10; i++) { const a = Math.random() * Math.PI * 2, s = 60 + Math.random() * 100; particles.push({ x: r.x + r.w / 2, y: r.y + 30, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60, life: 0.6, col: [P.butter, P.peach, P.mint][i % 3] }); }
       sfx.served(e.stars);
       updateHud();
-    } else if (e.type === 'left') { banner = { text: '😢 손님이 떠났어요', sub: '❤️ 하나를 잃었어요', t: 0, bad: true }; sfx.left(); }
+    } else if (e.type === 'left') { customerLeaves(e.order, false); banner = { text: '😢 손님이 떠났어요', sub: '❤️ 하나를 잃었어요', t: 0, bad: true }; sfx.left(); }
     else if (e.type === 'changed') {
       const a = C.menuOf(e.from), b = C.menuOf(e.to);
       banner = { text: `✏️ 주문이 바뀌었어요!`, sub: `${a.emoji} ${a.name} → ${b.emoji} ${b.name}`, t: 0, bad: true };
@@ -223,7 +224,7 @@ $('overlay').addEventListener('click', (e) => {
   if (!btn) return;
   const act = btn.dataset.act;
   if (act === 'start' || act === 'again') startGame();
-  else if (act === 'next') { C.nextDay(g); focus = 0; texts = []; state = 'play'; hideOverlay(); updateHud(); handleEvents(); }
+  else if (act === 'next') { C.nextDay(g); focus = 0; texts = []; crowd.clear(); state = 'play'; hideOverlay(); updateHud(); handleEvents(); }
   else if (act === 'book') showBook('backSummary');
   else if (act === 'bookMenu') showBook('backMenu');
   else if (act === 'bookPlay') { state = 'play'; hideOverlay(); }
@@ -358,42 +359,118 @@ function slipPath(x, y, w, h) {
   for (let i = 0; i < n; i++) { ctx.lineTo(x + w - (i + 0.5) * tw, y + h); ctx.lineTo(x + w - (i + 1) * tw, y + h - 6); }
   ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
 }
+// ---------- 손님 ----------
+// 손님은 오른쪽 문으로 걸어 들어와 자기 칸에서 기다리고, 커피를 받으면 좋아하며, 화나면 씩씩대며 나간다.
+const SLOTS = 5, SLOT_W = 72, SLOT_GAP = 5, SLOT_X0 = (W - (SLOTS * SLOT_W + (SLOTS - 1) * SLOT_GAP)) / 2;
+const slotX = (i) => SLOT_X0 + i * (SLOT_W + SLOT_GAP);
+const FACES = ['👩', '👨', '🧑', '👧', '👦', '👵', '👴', '👱', '🧔'];
+const crowd = new Map();          // 주문 번호 → 손님 { slot, x, state: in | wait | happy | sad, t, face }
+
+function freeSlot() {
+  const used = new Set([...crowd.values()].filter((c) => c.state === 'in' || c.state === 'wait').map((c) => c.slot));
+  for (let i = 0; i < SLOTS; i++) if (!used.has(i)) return i;
+  return 0;
+}
+// 주문이 생기면 손님이 문에서 출발하고, 주문이 사라지면 (서빙·떠남 이벤트로 이미 표시된 손님만 남기고) 정리한다
+function syncCrowd() {
+  for (const o of g.orders) {
+    if (!crowd.has(o.id)) crowd.set(o.id, { id: o.id, slot: freeSlot(), x: W + 30, state: 'in', t: 0, face: FACES[(o.id * 5 + 3) % FACES.length] });
+  }
+  for (const [id, c] of crowd) {
+    if ((c.state === 'in' || c.state === 'wait') && !g.orders.some((o) => o.id === id)) crowd.delete(id);
+  }
+}
+function updateCrowd(dt) {
+  for (const [id, c] of crowd) {
+    c.t += dt;
+    if (c.state === 'in') {
+      const tx = slotX(c.slot) + SLOT_W / 2;
+      c.x = Math.max(tx, c.x - 330 * dt);
+      if (c.x <= tx) { c.state = 'wait'; c.t = 0; }
+    } else if (c.state === 'happy') { if (c.t > 0.7) c.x += 260 * dt; }
+    else if (c.state === 'sad') { if (c.t > 0.5) c.x += 340 * dt; }
+    if (c.x > W + 40) crowd.delete(id);
+  }
+}
+function customerLeaves(order, happy) {
+  const c = crowd.get(order.id);
+  if (!c) return;
+  if (c.state === 'in') { crowd.delete(order.id); return; }
+  c.state = happy ? 'happy' : 'sad'; c.t = 0;
+}
+
+function drawCrowd() {
+  const baseY = Y_COUNTER - 21;
+  const list = [...crowd.values()].sort((a, b) => a.slot - b.slot);
+  for (const c of list) {
+    const o = g.orders.find((x) => x.id === c.id);
+    const walking = c.state === 'in' || (c.state === 'happy' && c.t > 0.7) || (c.state === 'sad' && c.t > 0.5);
+    let y = baseY, tilt = 0;
+    if (walking) { y -= Math.abs(Math.sin(c.t * 16)) * 5; tilt = Math.sin(c.t * 16) * 0.08; }
+    else if (c.state === 'wait') y -= Math.sin(clock * 2 + c.id) * 1.5;               // 가만히 서서 살짝 들썩
+    else if (c.state === 'happy') y -= Math.abs(Math.sin(c.t * 9)) * 14;             // 좋아서 폴짝
+    else if (c.state === 'sad') y -= Math.abs(Math.sin(c.t * 30)) * 3;               // 씩씩
+    ctx.save(); ctx.translate(c.x, y); ctx.rotate(tilt);
+    // 몸(앞치마 대신 옷깃): 얼굴 아래 둥근 어깨
+    ctx.fillStyle = ['#7fb7c9', '#d9694a', '#8fbf7a', '#b98ad0', '#e0a02e'][c.id % 5];
+    ctx.strokeStyle = INK; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.ellipse(0, 26, 25, 19, 0, Math.PI, 0); ctx.fill(); ctx.stroke();
+    emoji(c.state === 'happy' ? '😋' : c.state === 'sad' ? '😠' : c.face, 0, 0, 42);
+    ctx.restore();
+    // 기분: 참을성이 줄면 땀, 바닥나기 직전엔 분노
+    if (c.state === 'wait' && o) {
+      const k = o.patience / o.patienceMax;
+      if (k < 0.25) emoji('💢', c.x + 22, y - 16 + Math.sin(clock * 14) * 2, 20);
+      else if (k < 0.5) emoji('💧', c.x + 21, y - 12, 16);
+      if (o.changed && Math.sin(clock * 10) > 0) emoji('❗', c.x - 22, y - 16, 18);
+    }
+    if (c.state === 'happy') { emoji('❤️', c.x + 14, y - 22 - c.t * 16, 18, Math.max(0, 1 - c.t)); if (c.t > 0.3) emoji('☕', c.x - 22, y + 4, 18); }
+    if (c.state === 'sad') emoji('💢', c.x + 18, y - 20, 20);
+  }
+  // 카운터 윗판: 손님의 아랫부분을 가린다
+  wood(-6, Y_COUNTER, W + 12, 22, 8, P.wood, P.woodDark, 3);
+  if (g.day === 1 && g.orders.some((o) => o.station < 0 && crowd.get(o.id) && crowd.get(o.id).state === 'wait')) label('👆 주문서를 눌러 자리에 올려요', W / 2, Y_COUNTER + 11, 14, P.butter);
+  else if (!g.orders.length && !crowd.size) plain(g.phase === 'open' ? '손님을 기다리는 중…' : '마지막 주문을 마무리해요', W / 2, Y_COUNTER + 11, 14, P.cream);
+}
+
 function drawTickets() {
-  const n = 5, w = 72, gap = 5, x0 = (W - (n * w + (n - 1) * gap)) / 2, ry = Y_TICKETS + 2;
-  // 줄
+  const ry = Y_TICKETS + 2;
   ctx.strokeStyle = INK; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(4, ry); ctx.lineTo(W - 4, ry); ctx.stroke();
   ctx.strokeStyle = P.woodDark; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(4, ry); ctx.lineTo(W - 4, ry); ctx.stroke();
-  for (let i = 0; i < n; i++) {
-    const x = x0 + i * (w + gap), y = Y_TICKETS + 10, h = 82, o = g.orders[i];
+  const w = SLOT_W, h = 66;
+  for (let i = 0; i < SLOTS; i++) {
+    const x = slotX(i), y = Y_TICKETS + 10;
+    const c = [...crowd.values()].find((q) => q.slot === i && q.state === 'wait');
+    const o = c && g.orders.find((q) => q.id === c.id);
     if (!o) { ctx.strokeStyle = 'rgba(111,67,39,.35)'; ctx.setLineDash([5, 5]); ctx.lineWidth = 2; slipPath(x, y, w, h); ctx.stroke(); ctx.setLineDash([]); continue; }
     const m = menuOfOrder(o), taken = o.station >= 0, k = o.patience / o.patienceMax;
     const urgent = !taken && k < 0.25, flash = o.changed && Math.sin(clock * 12) > 0;
     const shake = urgent ? Math.sin(clock * 30) * 1.5 : 0;
+    const pop = Math.min(1, c.t * 5);                                              // 손님이 도착하면 주문서가 톡 걸린다
     btn(`ticket:${o.id}`, x, y, w, h, '', {
       tap: () => assignTicket(o.id),
       draw: (bx, by) => {
-        ctx.save(); ctx.translate(shake, 0);
-        ctx.globalAlpha = taken ? 0.6 : 1;
+        by -= (1 - pop) * 14;
+        ctx.save(); ctx.globalAlpha = pop; ctx.translate(shake, 0);
+        ctx.globalAlpha = pop * (taken ? 0.6 : 1);
         ctx.fillStyle = INK; slipPath(bx, by + 4, w, h); ctx.fill();
         ctx.fillStyle = flash ? '#ffd9c9' : taken ? '#e6d8bf' : P.paper; slipPath(bx, by, w, h); ctx.fill();
         ctx.lineWidth = 2.5; ctx.strokeStyle = urgent ? P.berry : INK; slipPath(bx, by, w, h); ctx.stroke();
-        emoji(m.emoji, bx + w / 2, by + 26, 26);
-        (SHORT[m.id] || [m.name]).forEach((ln, j, arr) => plain(ln, bx + w / 2, by + 48 + (j - (arr.length - 1) / 2) * 13, 13, INK));
-        ctx.fillStyle = 'rgba(59,36,22,.18)'; roundRect(ctx, bx + 7, by + h - 20, w - 14, 7, 3.5); ctx.fill();
+        emoji(m.emoji, bx + w / 2, by + 20, 24);
+        (SHORT[m.id] || [m.name]).forEach((ln, j, arr) => plain(ln, bx + w / 2, by + 38 + (j - (arr.length - 1) / 2) * 12, 12, INK));
+        ctx.fillStyle = 'rgba(59,36,22,.18)'; roundRect(ctx, bx + 7, by + h - 15, w - 14, 6, 3); ctx.fill();
         ctx.fillStyle = k > 0.5 ? '#5aa469' : k > 0.25 ? '#e0a02e' : P.berry;
-        roundRect(ctx, bx + 7, by + h - 20, Math.max(6, (w - 14) * k), 7, 3.5); ctx.fill();
+        roundRect(ctx, bx + 7, by + h - 15, Math.max(6, (w - 14) * k), 6, 3); ctx.fill();
         ctx.restore();
-        ctx.globalAlpha = 1;
-        // 집게
+        ctx.globalAlpha = pop;
         ctx.fillStyle = P.butter; ctx.strokeStyle = INK; ctx.lineWidth = 2.2;
         roundRect(ctx, bx + w / 2 - 7 + shake, by - 12, 14, 20, 4); ctx.fill(); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(bx + w / 2 - 7 + shake, by - 2); ctx.lineTo(bx + w / 2 + 7 + shake, by - 2); ctx.stroke();
         if (taken) { ctx.save(); ctx.translate(bx + w - 14, by + 14); ctx.rotate(0.3); label(`${o.station + 1}번`, 0, 0, 13, P.cream); ctx.restore(); }
+        ctx.globalAlpha = 1;
       },
     });
   }
-  if (!g.orders.length) plain(g.phase === 'open' ? '손님을 기다리는 중…' : '마지막 주문을 마무리해요', W / 2, Y_TICKETS + 52, 17, P.muted);
-  else if (g.day === 1 && g.orders.some((o) => o.station < 0)) label('👆 주문서를 눌러 자리에 올려요', W / 2, Y_TICKETS + 108, 15, P.butter);
 }
 
 function neededTemps() {
@@ -409,14 +486,14 @@ function neededTemps() {
 // 주전자: 나무 선반 위 칠판에 온도, 오른쪽에 불·찬물 버튼
 function drawKettle() {
   const y = Y_KETTLE, k = g.kettle;
-  wood(10, y, 380, 60, 14, P.wood, P.woodDark, 4);
-  chalkboard(17, y + 7, 252, 46, 10);
-  emoji('🫖', 36, y + 24, 26);
+  wood(10, y, 380, 58, 14, P.wood, P.woodDark, 4);
+  chalkboard(17, y + 6, 252, 46, 10);
+  emoji('🫖', 36, y + 23, 26);
   const fs = g.stations[focus], fm = fs && fs.order ? menuOfOrder(fs.order) : null;
   const dev = fm ? Math.abs(k.temp - fm.temp) : 0;
-  chalk(`${k.temp.toFixed(1)}°C`, 76, y + 24, 23, 'left', fm && dev > 2 ? '#ff9a8a' : P.chalkLine);
-  if (fm) chalk(`필요 ${fm.temp}°C`, 76, y + 43, 12, 'left', 'rgba(247,241,227,.7)');
-  const bx = 156, bw = 104, by = y + 17, bh = 14, lo = 20, hi = 100, pos = (t) => bx + ((t - lo) / (hi - lo)) * bw;
+  chalk(`${k.temp.toFixed(1)}°C`, 76, y + 23, 23, 'left', fm && dev > 2 ? '#ff9a8a' : P.chalkLine);
+  if (fm) chalk(`필요 ${fm.temp}°C`, 76, y + 42, 12, 'left', 'rgba(247,241,227,.7)');
+  const bx = 156, bw = 104, by = y + 16, bh = 14, lo = 20, hi = 100, pos = (t) => bx + ((t - lo) / (hi - lo)) * bw;
   ctx.fillStyle = 'rgba(247,241,227,.18)'; roundRect(ctx, bx, by, bw, bh, 7); ctx.fill();
   const gr = ctx.createLinearGradient(bx, 0, bx + bw, 0); gr.addColorStop(0, '#7fd3ff'); gr.addColorStop(0.6, '#ffc35a'); gr.addColorStop(1, '#ff6a4d');
   ctx.fillStyle = gr; roundRect(ctx, bx, by, Math.max(7, pos(k.temp) - bx), bh, 7); ctx.fill();
@@ -426,8 +503,8 @@ function drawKettle() {
     ctx.fillStyle = n.si === focus ? P.butter : 'rgba(246,200,95,.55)';
     ctx.beginPath(); ctx.moveTo(x, by + bh + 2); ctx.lineTo(x - 5, by + bh + 11); ctx.lineTo(x + 5, by + bh + 11); ctx.closePath(); ctx.fill();
   }
-  btn('heat', 278, y + 5, 64, 52, '🔥', { hold: true, size: 26, color: P.berry, r: 18, down: () => C.heat(g, true), up: () => C.heat(g, false) });
-  btn('cool', 348, y + 5, 36, 52, '💧', { size: 22, color: P.sky, r: 18, tap: () => { C.cool(g); sfx.tap(); } });
+  btn('heat', 278, y + 4, 64, 50, '🔥', { hold: true, size: 26, color: P.berry, r: 18, down: () => C.heat(g, true), up: () => C.heat(g, false) });
+  btn('cool', 348, y + 4, 36, 50, '💧', { size: 22, color: P.sky, r: 18, tap: () => { C.cool(g); sfx.tap(); } });
 }
 
 // 자리: 나무 쟁반
@@ -439,17 +516,17 @@ function drawTabs() {
       draw: (bx, by, bw, bh) => {
         wood(bx, by, bw, bh, 14, sel ? P.butter : P.latte, sel ? '#c98f30' : P.wood, sel ? 3 : 4);
         if (sel) { ctx.lineWidth = 3.5; ctx.strokeStyle = INK; roundRect(ctx, bx + 3, by + 3, bw - 6, bh - 6, 11); ctx.stroke(); }
-        if (!o) { plain(`${si + 1}번 자리`, bx + bw / 2, by + 24, 15, P.coffee); plain('비어 있어요', bx + bw / 2, by + 43, 13, P.muted); return; }
+        if (!o) { plain(`${si + 1}번 자리`, bx + bw / 2, by + 21, 15, P.coffee); plain('비어 있어요', bx + bw / 2, by + 40, 13, P.muted); return; }
         const m = menuOfOrder(o), steps = C.stepsFor(m);
-        emoji(m.emoji, bx + 24, by + 25, 26);
-        plain((SHORT[m.id] || [m.name]).join(' '), bx + 52, by + 21, 14, INK, 'left');
+        emoji(m.emoji, bx + 24, by + 23, 26);
+        plain((SHORT[m.id] || [m.name]).join(' '), bx + 52, by + 19, 14, INK, 'left');
         const dotW = Math.min(9, (bw - 24) / steps.length);
         steps.forEach((s, i) => {
           ctx.fillStyle = i < st.idx ? '#4f9a5d' : i === st.idx ? P.berry : 'rgba(59,36,22,.3)';
-          ctx.beginPath(); ctx.arc(bx + 12 + i * dotW + dotW / 2, by + 48, i === st.idx ? 3.8 : 2.8, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(bx + 12 + i * dotW + dotW / 2, by + 45, i === st.idx ? 3.8 : 2.8, 0, Math.PI * 2); ctx.fill();
         });
-        if (st.wait > 0) label(`${st.wait.toFixed(0)}s`, bx + bw - 10, by + 21, 15, '#bfeaff', 'right');
-        else if (st.hold) label('●', bx + bw - 10, by + 21, 15, P.berry, 'right');
+        if (st.wait > 0) label(`${st.wait.toFixed(0)}s`, bx + bw - 10, by + 19, 15, '#bfeaff', 'right');
+        else if (st.hold) label('●', bx + bw - 10, by + 19, 15, P.berry, 'right');
       },
     });
   });
@@ -606,10 +683,11 @@ function draw() {
   if (!g) return;
   drawTopBar();
   drawTickets();
+  drawCrowd();
   drawKettle();
   drawTabs();
   drawPanel();
-  btn('book', 10, Y_BOOK, 380, 42, '📖 레시피북', { size: 18, color: P.coffee, tap: openBook, r: 21 });
+  btn('book', 10, Y_BOOK, 380, 38, '📖 레시피북', { size: 17, color: P.coffee, tap: openBook, r: 19 });
 
   for (const p of particles) {
     ctx.globalAlpha = Math.min(1, p.life * 3);
@@ -651,6 +729,8 @@ function update(dt) {
   if (state !== 'play' || !g) return;
   C.update(g, dt);
   handleEvents();
+  syncCrowd();
+  updateCrowd(dt);
 }
 
 function updateHud() {
@@ -736,7 +816,7 @@ requestAnimationFrame(frame);
 // 테스트용
 window.__cf = {
   get g() { return g; }, get state() { return state; }, get focus() { return focus; }, set focus(v) { focus = v; },
-  get buttons() { return buttons; }, get banner() { return banner; },
+  get buttons() { return buttons; }, get banner() { return banner; }, get crowd() { return crowd; },
   startGame, update, draw, handleEvents, pause, resume, openBook, showMenu,
   press(id, pid = 1) { const b = buttons.find((x) => x.id === id); if (!b) return false; pressButton(b, pid); return true; },
   release(pid = 1) { releasePointer(pid); },
