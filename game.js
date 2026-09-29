@@ -125,7 +125,7 @@ function handleEvents() {
       updateHud();
     } else if (e.type === 'ruined') {
       const r = tabRect(e.station), m = C.menuOf(e.order.menuId);
-      ruinFlash[e.station] = 1.6; focus = e.station;
+      ruinFlash[e.station] = 1.6;
       say('☠ 망했어요', r.x + r.w / 2, r.y + 26, '#ff9a8a', 22);
       for (let i = 0; i < 14; i++) { const a = Math.random() * Math.PI * 2, sp = 50 + Math.random() * 110; particles.push({ x: r.x + r.w / 2, y: r.y + 28, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 0.7, col: i % 2 ? '#6b3f1d' : '#3b2416' }); }
       banner = e.reason === 'pour'
@@ -533,7 +533,8 @@ function drawTabs() {
         if (!o) { plain(`${si + 1}번 자리`, bx + bw / 2, by + 21, 15, P.coffee); plain('비어 있어요', bx + bw / 2, by + 40, 13, P.muted); return; }
         const m = menuOfOrder(o), steps = C.stepsFor(m);
         emoji(m.emoji, bx + 24, by + 23, 26);
-        plain((SHORT[m.id] || [m.name]).join(' '), bx + 52, by + 19, 14, INK, 'left');
+        const stepNow = steps[st.idx], what = st.window > 0 ? '붓기!' : st.wait > 0 ? '뜸 들이는 중' : stepInfo(m, st, stepNow)[0].replace(/^[①-⑪]\s*/, '');
+        plain(what, bx + 50, by + 19, bw > 150 ? 14 : 13, st.window > 0 ? P.berry : INK, 'left');
         const dotW = Math.min(9, (bw - 24) / steps.length);
         steps.forEach((s, i) => {
           ctx.fillStyle = i < st.idx ? '#4f9a5d' : i === st.idx ? P.berry : 'rgba(59,36,22,.3)';

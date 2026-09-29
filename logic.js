@@ -26,7 +26,7 @@ const totalWater = (m) => m.pours.reduce((a, b) => a + b, 0);
 
 // ---------- 손에 잡히는 수치 ----------
 const DAY_LEN = 90;                 // 손님이 오는 시간(초). 그 뒤엔 남은 주문만 마무리
-const WAITS = [5, 4, 4];            // 푸어 뒤 다음 푸어까지 뜸 들이는 시간(초): 뜸 5초, 이후 4초씩
+const WAITS = [10, 8, 8];           // 푸어 뒤 다음 푸어까지 뜸 들이는 시간(초): 뜸 10초, 이후 8초씩 (다른 자리를 만질 틈)
 const CRANKS = 10;                  // 원두 갈기 탭 수
 const SWIRLS = 5;                   // 저어주기 탭 수
 const POUR_RATE = 12;               // 초당 붓는 물(g)
@@ -35,14 +35,15 @@ const MAX_QUEUE = 5, MAX_HEARTS = 3;
 
 // 자리는 처음부터 2개, 4일차부터 3개. 주문이 겹치면 동시에 만든다
 const stationCount = (day) => (day >= 4 ? 3 : 2);
-// 뜸 시간이 끝나고 이 시간 안에 다음 푸어를 시작하지 않으면 커피가 망가진다 (날이 갈수록 빠듯해진다)
-const pourWindow = (day) => Math.max(11, 15 - day * 0.5);
+// 뜸 시간이 끝나고 이 시간 안에 다음 푸어를 시작하지 않으면 커피가 망가진다 (날이 갈수록 조금씩 빠듯해진다).
+// 다른 자리에서 원두 계량·분쇄·온도·린싱까지 한 번 하고 돌아올 수 있는 길이로 잡았다
+const pourWindow = (day) => Math.max(15, 30 - day * 1.5);
 // 마지막 푸어를 끝낸 뒤 이 시간 안에 서빙하지 않으면 식어서 못 마신다
 const SERVE_WINDOW = 22;
 const unlockedMenus = (day) => MENUS.filter((m) => m.unlockDay <= day);
-const patienceFor = (day, m) => Math.max(60, 115 - day * 6) + (m.ice ? 10 : 0);
+const patienceFor = (day, m) => Math.max(75, 130 - day * 6) + (m.ice ? 10 : 0);
 // 손님 사이 간격(초): 한 잔에 40~50초가 걸리고 자리는 2~3개라, 1일차에도 주문이 두 개쯤 겹친다
-const GAPS = [20, 20, 19, 17, 16, 15, 14, 13];
+const GAPS = [26, 24, 22, 20, 18, 17, 16, 15];
 const spawnGap = (day) => Math.max(12, GAPS[Math.min(day, GAPS.length) - 1] - Math.max(0, day - GAPS.length) * 0.5);
 
 function stepsFor(m) {
