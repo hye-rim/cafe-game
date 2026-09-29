@@ -29,7 +29,7 @@ const DAY_LEN = 90;                 // 손님이 오는 시간(초). 그 뒤엔 
 const WAITS = [10, 8, 8];           // 푸어 뒤 다음 푸어까지 뜸 들이는 시간(초): 뜸 10초, 이후 8초씩 (다른 자리를 만질 틈)
 const CRANKS = 10;                  // 원두 갈기 탭 수
 const SWIRLS = 5;                   // 저어주기 탭 수
-const POUR_RATE = 12;               // 초당 붓는 물(g)
+const POUR_RATE = 12;               // (참고용) 예전 고정 속도. 지금은 난이도별 pourBase → pourMax 로 빨라진다
 const HEAT_RATE = 6, COOL_RATE = 0.25, COOL_TAP = 3, ROOM_TEMP = 20, MAX_TEMP = 100;
 const MAX_QUEUE = 5, MAX_HEARTS = 3;
 
@@ -41,11 +41,13 @@ const MODES = {
     name: '쉬움', hearts: 5, beans: [1, 2.5], ice: [8, 16], temp: [2, 5], pour: [5, 12], pourTemp: [3, 7], pourTempMul: [1, 0.92, 0.8],
     rinseGood: [0.4, 0.9], rinseOk: 0.25, assist: true, cool: 0.12, patience: 1.35, gap: 1.3, window: 1.3, serve: 34, star3: 0.8, star2: 0.6,
     changeFrom: 5, changeChance: 0.1,
+    pourBase: 16, pourRamp: 20, pourMax: 40,
   },
   normal: {
     name: '보통', hearts: 3, beans: [0.5, 1.5], ice: [5, 10], temp: [1, 3], pour: [3, 8], pourTemp: [2, 5], pourTempMul: [1, 0.85, 0.6],
     rinseGood: [0.5, 0.85], rinseOk: 0.3, assist: false, cool: 0.25, patience: 1, gap: 1, window: 1, serve: 22, star3: 0.88, star2: 0.7,
     changeFrom: 3, changeChance: 0.15,
+    pourBase: 12, pourRamp: 12, pourMax: 24,
   },
 };
 
@@ -347,10 +349,11 @@ function update(g, dt) {
       }
     } else if (st.hold === 'rinse') st.rinse = Math.min(1, st.rinse + 0.5 * dt);
     else if (st.hold === 'pour') {
-      let rate = POUR_RATE;
-      if (g.cfg.assist) {
+      const c = g.cfg;
+      let rate = Math.min(c.pourMax, c.pourBase + st.holdT * c.pourRamp);                     // 누르고 있을수록 콸콸 (오래 누르는 수고를 줄인다)
+      if (c.assist) {
         const want = m.pours[Number(stepsFor(m)[st.idx].slice(4)) - 1];
-        rate = Math.min(rate, Math.max(3, (want - st.poured) * 1.5));                         // 쉬움: 목표량에 다가갈수록 졸졸
+        rate = Math.min(rate, Math.max(4, (want - st.poured) * 2.2));                         // 쉬움: 목표량에 다가갈수록 졸졸
       }
       st.poured += rate * dt;
     }
