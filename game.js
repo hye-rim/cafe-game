@@ -87,11 +87,21 @@ let buttons = [];                 // 이번 프레임에 그려진 누를 곳
 const holds = new Map();          // 누르고 있는 손가락 → 버튼
 let texts = [], particles = [], banner = null;
 const ruinFlash = {};                // 자리 번호 → 망쳤을 때 빨갛게 번쩍이는 남은 시간
-let best = Number(store.get('cafeBest')) || 0, bestDay = Number(store.get('cafeBestDay')) || 0;
+let mode = store.get('cafeMode') === 'normal' ? 'normal' : 'easy';           // 처음엔 쉬움
+const bestKey = (m) => `cafeBest_${m}`, dayKey = (m) => `cafeBestDay_${m}`;
+let best = Number(store.get(bestKey(mode))) || 0, bestDay = Number(store.get(dayKey(mode))) || 0;
+function setMode(m) { mode = m; store.set('cafeMode', m); best = Number(store.get(bestKey(m))) || 0; bestDay = Number(store.get(dayKey(m))) || 0; }
+// 기록 저장: 난이도별로 따로, 로비 카드(cafeBest)에는 두 난이도 중 큰 값
+function saveRecords() {
+  if (g.coins > best) { best = g.coins; store.set(bestKey(mode), String(best)); }
+  if (g.day > bestDay) { bestDay = g.day; store.set(dayKey(mode), String(bestDay)); }
+  store.set('cafeBest', String(Math.max(Number(store.get(bestKey('easy'))) || 0, Number(store.get(bestKey('normal'))) || 0)));
+}
 let clock = 0;
 
-function startGame() {
-  g = C.newGame(Math.random);
+function startGame(m) {
+  if (m) setMode(m);
+  g = C.newGame(Math.random, mode);
   focus = 0; texts = []; particles = []; banner = null; holds.clear(); crowd.clear(); for (const k of Object.keys(ruinFlash)) delete ruinFlash[k];
   state = 'play';
   hideOverlay();
@@ -149,8 +159,7 @@ function handleEvents() {
 // ---------- 하루 마감·게임 오버 ----------
 function showSummary() {
   state = 'summary';
-  if (g.coins > best) { best = g.coins; store.set('cafeBest', String(best)); }
-  if (g.day > bestDay) { bestDay = g.day; store.set('cafeBestDay', String(bestDay)); }
+  saveRecords();
   updateHud();
   const nextDay = g.day + 1;
   const newMenus = C.MENUS.filter((m) => m.unlockDay === nextDay);
@@ -159,8 +168,9 @@ function showSummary() {
   sfx.day();
   showOverlay(`
     <h2 class="inked">Day ${g.day} 마감!</h2>
+    <span class="tag">${g.cfg.name}</span>
     <div class="big inked">+${g.dayCoins.toLocaleString()}</div>
-    <span class="tag">${'❤️'.repeat(g.hearts)}${'🖤'.repeat(C.MAX_HEARTS - g.hearts)}</span>
+    <span class="tag">${'❤️'.repeat(g.hearts)}${'🖤'.repeat(g.maxHearts - g.hearts)}</span>
     <div class="card"><dl class="stats">
       <dt>만든 커피</dt><dd>${g.dayServed}잔</dd>
       <dt>놓친 손님</dt><dd>${g.dayLost}명</dd>
@@ -175,13 +185,13 @@ function showSummary() {
 
 function gameOver() {
   state = 'over';
-  if (g.coins > best) { best = g.coins; store.set('cafeBest', String(best)); }
-  if (g.day > bestDay) { bestDay = g.day; store.set('cafeBestDay', String(bestDay)); }
+  saveRecords();
   updateHud();
   sfx.end();
   const isBest = g.coins >= best && g.coins > 0;
   setTimeout(() => showOverlay(`
     <h2 class="inked">카페 문 닫음…</h2>
+    <span class="tag">${g.cfg.name} 난이도</span>
     <div class="big inked">${g.coins.toLocaleString()}</div>
     <span class="tag">${isBest ? '🏆 최고 기록!' : `최고 기록 ${best.toLocaleString()}`}</span>
     <div class="card"><dl class="stats">
@@ -211,7 +221,7 @@ function showBook(back) {
   showOverlay(`
     <h2 class="inked">📖 레시피북</h2>
     <div class="book">${recipeRows(day)}
-      <div class="note">⏱ 뜸이 끝나고 ${Math.round(C.pourWindow(day))}초 안에 붓기 시작하지 않으면, 또 다 내리고 ${C.SERVE_WINDOW}초 안에 서빙하지 않으면 커피가 망가져 처음부터 다시!<br>핫: 테츠 카스야 4:6 방식(20g · 300g · 92°C) 참고<br>아이스: 일본식 급랭 — 얼음을 서버에 먼저 담고 그 위로 내려요<br>첫 푸어는 원두의 2배로 뜸을 들이고, 뜸 시간은 게임에서 짧게 줄였어요</div>
+      <div class="note">⏱ 뜸이 끝나고 ${Math.round(C.pourWindow(day, g ? g.cfg : C.MODES[mode]))}초 안에 붓기 시작하지 않으면, 또 다 내리고 ${(g ? g.cfg : C.MODES[mode]).serve}초 안에 서빙하지 않으면 커피가 망가져 처음부터 다시!<br>핫: 테츠 카스야 4:6 방식(20g · 300g · 92°C) 참고<br>아이스: 일본식 급랭 — 얼음을 서버에 먼저 담고 그 위로 내려요<br>첫 푸어는 원두의 2배로 뜸을 들이고, 뜸 시간은 게임에서 짧게 줄였어요</div>
     </div>
     <button data-act="${back}">닫기</button>`);
 }
@@ -221,7 +231,9 @@ function showMenu() {
   showOverlay(`
     <h1>핸드드립 <span class="p">카페</span></h1>
     <p>주문은 밀려오고, 레시피는 헷갈리고…<br>원두·분쇄·온도·린싱·<b>푸어 4번</b>까지 정확하게!</p>
-    <button data-act="start">오픈하기</button>
+    <button data-act="start" data-mode="easy" ${mode === 'easy' ? '' : 'class="sub"'}>😊 쉬움으로 오픈</button>
+    <button data-act="start" data-mode="normal" ${mode === 'normal' ? '' : 'class="sub"'}>🔥 보통(원래 난이도)</button>
+    <p class="hint">쉬움: 오차가 넓고, 목표에 다가가면 저절로 느려지고, 하트 5개</p>
     <button class="sub" data-act="bookMenu">📖 레시피북</button>
     ${bestDay ? `<span class="tag">🏆 최고 ${best.toLocaleString()} · Day ${bestDay}</span>` : ''}
     <div class="card">
@@ -236,7 +248,8 @@ $('overlay').addEventListener('click', (e) => {
   const btn = e.target.closest('button');
   if (!btn) return;
   const act = btn.dataset.act;
-  if (act === 'start' || act === 'again') startGame();
+  if (act === 'start') startGame(btn.dataset.mode);
+  else if (act === 'again') startGame();
   else if (act === 'next') { C.nextDay(g); focus = 0; texts = []; crowd.clear(); state = 'play'; hideOverlay(); updateHud(); handleEvents(); }
   else if (act === 'book') showBook('backSummary');
   else if (act === 'bookMenu') showBook('backMenu');
@@ -356,7 +369,7 @@ function drawTopBar() {
   drawAwning();
   wood(10, 32, 96, 26, 10, P.wood, P.woodDark, 3);
   label(`Day ${g.day}`, 58, 46, 19, P.cream);
-  for (let i = 0; i < C.MAX_HEARTS; i++) emoji(i < g.hearts ? '❤️' : '🖤', 132 + i * 28, 46, 22, i < g.hearts ? 1 : 0.45);
+  for (let i = 0; i < g.maxHearts; i++) emoji(i < g.hearts ? '❤️' : '🖤', 128 + i * 24, 46, 20, i < g.hearts ? 1 : 0.45);
   const left = Math.max(0, C.DAY_LEN - g.clock);
   plain(g.phase === 'open' ? `영업 ${fmtTime(left)}` : '마감 준비 중', W - 12, 46, 18, g.phase === 'open' ? INK : P.berry, 'right');
   panel(10, 64, 380, 9, 4.5, P.paper, 2);
@@ -554,11 +567,11 @@ function drawTabs() {
 // 단계별 제목·안내
 function stepInfo(m, st, step) {
   const steps = C.stepsFor(m), n = CIRCLED[steps.indexOf(step)] || '';
-  if (step === 'beans') return [`${n} 원두 계량`, `원두 ${m.beans}g 을 담아요 (오차 ±0.5g)`];
+  if (step === 'beans') return [`${n} 원두 계량`, `원두 ${m.beans}g 을 담아요 (오차 ±${g.cfg.beans[0]}g)`];
   if (step === 'grind') return [`${n} 분쇄`, `분쇄도 「${C.GRINDS[m.grind]}」 를 고르고 손잡이를 돌려요`];
-  if (step === 'temp') return [`${n} 물 온도`, `주전자를 ${m.temp}°C 에 맞추고 확인해요 (오차 ±1°C)`];
+  if (step === 'temp') return [`${n} 물 온도`, `주전자를 ${m.temp}°C 에 맞추고 확인해요 (오차 ±${g.cfg.temp[0]}°C)`];
   if (step === 'rinse') return [`${n} 린싱`, '필터에 뜨거운 물을 적셔요. 초록 칸에서 손을 떼요'];
-  if (step === 'ice') return [`${n} 얼음 계량`, `서버에 얼음 ${m.ice}g 을 담아요 (오차 ±5g)`];
+  if (step === 'ice') return [`${n} 얼음 계량`, `서버에 얼음 ${m.ice}g 을 담아요 (오차 ±${g.cfg.ice[0]}g)`];
   if (step.startsWith('pour')) {
     const k = Number(step.slice(4)), cum = m.pours.slice(0, k).reduce((a, b) => a + b, 0);
     return [`${n} ${k === 1 ? '뜸 들이기' : `푸어 ${k}/4`}`, `이번엔 ${m.pours[k - 1]}g (누적 ${cum}g). 주전자 ${m.temp}°C 를 확인해요`];
@@ -610,7 +623,7 @@ function drawPanel() {
   chalkboard(x + 14, y + 14, w - 28, 38, 10);
   chalk(title, x + 28, y + 33, 22, 'left');
   // 제한 시간: 뜸이 끝난 뒤 붓기 시작까지 / 다 내린 뒤 서빙까지. 넘기면 커피가 망가진다
-  const lim = st.window > 0 ? { v: st.window, max: C.pourWindow(g.day), tag: '⏱ 지금 부어요' } : st.cold > 0 ? { v: st.cold, max: C.SERVE_WINDOW, tag: '❄ 식기 전에' } : null;
+  const lim = st.window > 0 ? { v: st.window, max: C.pourWindow(g.day, g.cfg), tag: '⏱ 지금 부어요' } : st.cold > 0 ? { v: st.cold, max: g.cfg.serve, tag: '❄ 식기 전에' } : null;
   if (lim) {
     const kk = lim.v / lim.max, hot = kk < 0.35;
     chalk(`${lim.tag} ${lim.v.toFixed(1)}s`, x + w - 26, y + 33, 15, 'right', hot && Math.sin(clock * 12) > 0 ? '#ff8a7a' : hot ? '#ffb3a3' : P.butter);
@@ -630,7 +643,7 @@ function drawPanel() {
     ctx.fillStyle = '#2a2118'; roundRect(ctx, x + 84, cy + 6, 212, 60, 10); ctx.fill();
     ctx.lineWidth = 2.5; ctx.strokeStyle = INK; roundRect(ctx, x + 84, cy + 6, 212, 60, 10); ctx.stroke();
     plain(`${isBeans ? val.toFixed(1) : Math.round(val)} g`, W / 2, cy + 38, 40, '#b6f0c2');
-    drawGauge(x + 30, cy + 110, 320, 22, val, target * 1.4, target, isBeans ? 0.5 : 5, isBeans ? '#a5703c' : '#9fd4e6');
+    drawGauge(x + 30, cy + 110, 320, 22, val, target * 1.4, target, isBeans ? g.cfg.beans[0] : g.cfg.ice[0], isBeans ? '#a5703c' : '#9fd4e6');
     plain(`목표 ${target}g`, x + 30 + (target / (target * 1.4)) * 320, cy + 150, 15, INK);
     const by = y + 290;
     holdBtn('add', x + 16, by, 188, 84, isBeans ? '🫘 꾹 눌러\n담기' : '🧊 꾹 눌러\n담기', si, 'add', { size: 20 });
@@ -693,7 +706,7 @@ function drawPanel() {
     drawGauge(x + 60, cy + 170, 260, 22, st.swirls, C.SWIRLS, null, 0, '#9fd4e6');
     tapBtn('swirl', x + 60, y + 290, 260, 84, '🌀 빙글빙글!', si, 'swirl', { color: '#4f9db8', size: 24 });
   } else if (step === 'serve') {
-    const avg = st.res.reduce((a, b) => a + b, 0) / st.res.length, stars = C.starsOf(avg);
+    const avg = st.res.reduce((a, b) => a + b, 0) / st.res.length, stars = C.starsOf(avg, g.cfg);
     ctx.fillStyle = 'rgba(59,36,22,.22)'; ctx.beginPath(); ctx.ellipse(W / 2, cy + 100, 70, 14, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = P.paper; ctx.strokeStyle = INK; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(W / 2, cy + 94, 66, 12, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     emoji(m.emoji, W / 2, cy + 60, 84);
@@ -835,7 +848,7 @@ $('pauseBtn').onclick = (e) => { e.currentTarget.blur(); state === 'paused' ? re
 $('muteBtn').textContent = muted ? '🔇' : '🔊';
 
 // 첫 화면 뒤에 흐릿하게 보일 카페
-g = C.newGame(Math.random); g.events.length = 0;
+g = C.newGame(Math.random, mode); g.events.length = 0;
 updateHud();
 showMenu();
 fit();

@@ -34,17 +34,32 @@ const HEAT_RATE = 6, COOL_RATE = 0.25, COOL_TAP = 3, ROOM_TEMP = 20, MAX_TEMP = 
 const MAX_QUEUE = 5, MAX_HEARTS = 3;
 
 // 자리는 처음부터 2개, 4일차부터 3개. 주문이 겹치면 동시에 만든다
+// 난이도. 보통 = 원래 난이도. 쉬움은 오차 허용을 넓히고, 목표에 가까워지면 속도를 줄여 주고(assist), 시간·참을성·하트를 넉넉히 준다.
+// beans/ice/temp/pour: [만점 오차, 그럭저럭 오차]. pourTemp: 붓는 순간 주전자 온도 오차 [괜찮음, 아쉬움] (곱해지는 점수는 pourTempMul)
+const MODES = {
+  easy: {
+    name: '쉬움', hearts: 5, beans: [1, 2.5], ice: [8, 16], temp: [2, 5], pour: [5, 12], pourTemp: [3, 7], pourTempMul: [1, 0.92, 0.8],
+    rinseGood: [0.4, 0.9], rinseOk: 0.25, assist: true, cool: 0.12, patience: 1.35, gap: 1.3, window: 1.3, serve: 34, star3: 0.8, star2: 0.6,
+    changeFrom: 5, changeChance: 0.1,
+  },
+  normal: {
+    name: '보통', hearts: 3, beans: [0.5, 1.5], ice: [5, 10], temp: [1, 3], pour: [3, 8], pourTemp: [2, 5], pourTempMul: [1, 0.85, 0.6],
+    rinseGood: [0.5, 0.85], rinseOk: 0.3, assist: false, cool: 0.25, patience: 1, gap: 1, window: 1, serve: 22, star3: 0.88, star2: 0.7,
+    changeFrom: 3, changeChance: 0.15,
+  },
+};
+
 const stationCount = (day) => (day >= 4 ? 3 : 2);
 // 뜸 시간이 끝나고 이 시간 안에 다음 푸어를 시작하지 않으면 커피가 망가진다 (날이 갈수록 조금씩 빠듯해진다).
 // 다른 자리에서 원두 계량·분쇄·온도·린싱까지 한 번 하고 돌아올 수 있는 길이로 잡았다
-const pourWindow = (day) => Math.max(15, 30 - day * 1.5);
+const pourWindow = (day, cfg = MODES.normal) => Math.max(15, 30 - day * 1.5) * cfg.window;
 // 마지막 푸어를 끝낸 뒤 이 시간 안에 서빙하지 않으면 식어서 못 마신다
 const SERVE_WINDOW = 22;
 const unlockedMenus = (day) => MENUS.filter((m) => m.unlockDay <= day);
-const patienceFor = (day, m) => Math.max(75, 130 - day * 6) + (m.ice ? 10 : 0);
+const patienceFor = (day, m, cfg = MODES.normal) => (Math.max(75, 130 - day * 6) + (m.ice ? 10 : 0)) * cfg.patience;
 // 손님 사이 간격(초): 한 잔에 40~50초가 걸리고 자리는 2~3개라, 1일차에도 주문이 두 개쯤 겹친다
 const GAPS = [26, 24, 22, 20, 18, 17, 16, 15];
-const spawnGap = (day) => Math.max(12, GAPS[Math.min(day, GAPS.length) - 1] - Math.max(0, day - GAPS.length) * 0.5);
+const spawnGap = (day, cfg = MODES.normal) => Math.max(12, GAPS[Math.min(day, GAPS.length) - 1] - Math.max(0, day - GAPS.length) * 0.5) * cfg.gap;
 
 function stepsFor(m) {
   const s = ['beans', 'grind', 'temp', 'rinse'];
@@ -69,8 +84,9 @@ function newStation() {
   return { order: null, idx: 0, res: [], beans: 0, ice: 0, grindSel: -1, cranks: 0, rinse: 0, poured: 0, wait: 0, swirls: 0, water: 0, window: 0, windowSaved: 0, cold: 0, hold: null, holdT: 0 };
 }
 
-function newGame(rng = Math.random) {
-  const g = { day: 0, coins: 0, hearts: MAX_HEARTS, over: false, events: [], nextId: 1, best: { stars3: 0 }, served: 0, ruined: 0, rng };
+function newGame(rng = Math.random, mode = 'normal') {
+  const cfg = MODES[mode] || MODES.normal;
+  const g = { day: 0, mode, cfg, maxHearts: cfg.hearts, coins: 0, hearts: cfg.hearts, over: false, events: [], nextId: 1, best: { stars3: 0 }, served: 0, ruined: 0, rng };
   nextDay(g);
   return g;
 }
@@ -84,7 +100,7 @@ function nextDay(g) {
   g.stations = Array.from({ length: stationCount(g.day) }, newStation);
   g.kettle = { temp: 85, heat: false };
   g.dayCoins = 0; g.dayServed = 0; g.dayLost = 0; g.dayStars = 0; g.dayRuined = 0;
-  if (g.day > 1 && g.hearts < MAX_HEARTS) g.hearts++;
+  if (g.day > 1 && g.hearts < g.maxHearts) g.hearts++;
   const newMenus = MENUS.filter((m) => m.unlockDay === g.day);
   g.events.push({ type: 'day', day: g.day, newMenus: newMenus.map((m) => m.id) });
 }
@@ -96,7 +112,7 @@ function spawnOrder(g) {
   // 새로 열린 메뉴가 조금 더 자주 나오도록
   const pool = list.concat(list.filter((m) => m.unlockDay === g.day));
   const m = pool[Math.floor(g.rng() * pool.length)];
-  const p = patienceFor(g.day, m);
+  const p = patienceFor(g.day, m, g.cfg);
   const o = { id: g.nextId++, menuId: m.id, patience: p, patienceMax: p, station: -1, assignedT: 0, changeAt: null, changed: false };
   g.orders.push(o);
   g.events.push({ type: 'order', order: o });
@@ -108,7 +124,7 @@ function assign(g, orderId, si) {
   if (!o || !st || st.order || o.station >= 0) return false;
   Object.assign(st, newStation());
   st.order = o; o.station = si; o.assignedT = 0;
-  if (g.day >= 3 && g.rng() < 0.15) o.changeAt = 6 + g.rng() * 14;     // 가끔 손님이 주문을 바꾼다
+  if (g.day >= g.cfg.changeFrom && g.rng() < g.cfg.changeChance) o.changeAt = 6 + g.rng() * 14;     // 가끔 손님이 주문을 바꾼다
   g.events.push({ type: 'assign', order: o, station: si });
   return true;
 }
@@ -174,7 +190,7 @@ function act(g, si, name, down = true, arg) {
     if (name === 'rinse') {
       const r = st.rinse; st.hold = null;
       if (r < 0.05) return false;
-      const q = r >= 0.5 && r <= 0.85 ? 1 : (r >= 0.3 && r < 0.5) || (r > 0.85) ? 0.7 : 0.4;
+      const c = g.cfg, q = r >= c.rinseGood[0] && r <= c.rinseGood[1] ? 1 : r >= c.rinseOk ? 0.7 : 0.4;
       st.rinse = 0;
       finishStep(g, si, q);
       return true;
@@ -183,11 +199,11 @@ function act(g, si, name, down = true, arg) {
       const k = Number(step.slice(4)), got = st.poured, want = m.pours[k - 1];
       st.hold = null;
       if (got < 1) { st.window = st.windowSaved; return false; }          // 살짝 눌렀다 뗀 건 붓기로 치지 않는다: 제한 시간은 계속 간다
-      const tdev = Math.abs(g.kettle.temp - m.temp);
-      const tf = tdev <= 2 ? 1 : tdev <= 5 ? 0.85 : 0.6;
-      const q = q3(Math.abs(got - want), 3, 8) * tf;
+      const tdev = Math.abs(g.kettle.temp - m.temp), c = g.cfg;
+      const tf = tdev <= c.pourTemp[0] ? c.pourTempMul[0] : tdev <= c.pourTemp[1] ? c.pourTempMul[1] : c.pourTempMul[2];
+      const q = q3(Math.abs(got - want), c.pour[0], c.pour[1]) * tf;
       st.water += got; st.poured = 0;
-      if (k < 4) st.wait = WAITS[k - 1]; else st.cold = SERVE_WINDOW;
+      if (k < 4) st.wait = WAITS[k - 1]; else st.cold = g.cfg.serve;
       finishStep(g, si, q);
       return true;
     }
@@ -200,7 +216,7 @@ function act(g, si, name, down = true, arg) {
     if (name === 'sub') { st[key] = Math.max(0, st[key] - (key === 'beans' ? 0.5 : 5)); return true; }
     if (name === 'confirm') {
       const dev = Math.abs(st[key] - m[key]);
-      finishStep(g, si, key === 'beans' ? q3(dev, 0.5, 1.5) : q3(dev, 5, 10));
+      finishStep(g, si, key === 'beans' ? q3(dev, g.cfg.beans[0], g.cfg.beans[1]) : q3(dev, g.cfg.ice[0], g.cfg.ice[1]));
       return true;
     }
     return false;
@@ -217,7 +233,7 @@ function act(g, si, name, down = true, arg) {
   }
   if (step === 'temp') {
     if (name !== 'confirm') return false;
-    finishStep(g, si, q3(Math.abs(g.kettle.temp - m.temp), 1, 3));
+    finishStep(g, si, q3(Math.abs(g.kettle.temp - m.temp), g.cfg.temp[0], g.cfg.temp[1]));
     return true;
   }
   if (step === 'rinse') {
@@ -242,12 +258,12 @@ function act(g, si, name, down = true, arg) {
   return false;
 }
 
-function starsOf(q) { return q >= 0.88 ? 3 : q >= 0.7 ? 2 : 1; }
+function starsOf(q, cfg = MODES.normal) { return q >= cfg.star3 ? 3 : q >= cfg.star2 ? 2 : 1; }
 
 function serve(g, si) {
   const st = g.stations[si], o = st.order, m = menuOf(o.menuId);
   const q = st.res.reduce((a, b) => a + b, 0) / st.res.length;
-  const stars = starsOf(q);
+  const stars = starsOf(q, g.cfg);
   const tip = o.patience / o.patienceMax > 0.5 ? Math.round(m.price * 0.1) : 0;
   const coins = Math.round(m.price * [0.7, 1, 1.3][stars - 1]) + tip;
   g.coins += coins; g.dayCoins += coins; g.served++; g.dayServed++; g.dayStars += stars;
@@ -276,7 +292,18 @@ function update(g, dt) {
 
   // 주전자: 누르고 있으면 데워지고, 아니면 서서히 식는다
   const k = g.kettle;
-  k.temp = k.heat ? Math.min(MAX_TEMP, k.temp + HEAT_RATE * dt) : Math.max(ROOM_TEMP, k.temp - COOL_RATE * dt);
+  if (k.heat) {
+    let rate = HEAT_RATE;
+    if (g.cfg.assist) {                                  // 쉬움: 지금 맞춰야 할 온도에 가까워지면 천천히 데워진다
+      const goals = g.stations.map((st) => {
+        if (!st.order) return null;
+        const m = menuOf(st.order.menuId), step = stepsFor(m)[st.idx];
+        return step === 'temp' || (step && step.startsWith('pour')) ? m.temp : null;
+      }).filter((t) => t !== null && t >= k.temp - 0.2);
+      if (goals.length) rate = Math.min(HEAT_RATE, Math.max(1, Math.min(...goals) - k.temp));
+    }
+    k.temp = Math.min(MAX_TEMP, k.temp + rate * dt);
+  } else k.temp = Math.max(ROOM_TEMP, k.temp - g.cfg.cool * dt);
 
   // 손님 도착
   if (g.phase === 'open') {
@@ -294,7 +321,7 @@ function update(g, dt) {
     st.order.assignedT += dt;
     if (st.wait > 0) {
       st.wait = Math.max(0, st.wait - dt);
-      if (st.wait === 0) st.window = pourWindow(g.day);           // 뜸이 끝났다: 이제 정해진 시간 안에 부어야 한다
+      if (st.wait === 0) st.window = pourWindow(g.day, g.cfg);           // 뜸이 끝났다: 이제 정해진 시간 안에 부어야 한다
     }
     if (st.window > 0 && !st.hold) {
       st.window -= dt;
@@ -309,10 +336,24 @@ function update(g, dt) {
     const m = menuOf(st.order.menuId);
     if (st.hold === 'add') {
       const step = stepsFor(m)[st.idx];
-      if (step === 'beans') st.beans += Math.min(3 + st.holdT * 4, 12) * dt;
-      else if (step === 'ice') st.ice += Math.min(20 + st.holdT * 40, 90) * dt;
+      if (step === 'beans') {
+        let rate = Math.min(3 + st.holdT * 4, 12);
+        if (g.cfg.assist) rate = Math.min(rate, Math.max(1.2, (m.beans - st.beans) * 1.6));      // 쉬움: 목표에 다가갈수록 천천히
+        st.beans += rate * dt;
+      } else if (step === 'ice') {
+        let rate = Math.min(20 + st.holdT * 40, 90);
+        if (g.cfg.assist) rate = Math.min(rate, Math.max(10, (m.ice - st.ice) * 2.2));
+        st.ice += rate * dt;
+      }
     } else if (st.hold === 'rinse') st.rinse = Math.min(1, st.rinse + 0.5 * dt);
-    else if (st.hold === 'pour') st.poured += POUR_RATE * dt;
+    else if (st.hold === 'pour') {
+      let rate = POUR_RATE;
+      if (g.cfg.assist) {
+        const want = m.pours[Number(stepsFor(m)[st.idx].slice(4)) - 1];
+        rate = Math.min(rate, Math.max(3, (want - st.poured) * 1.5));                         // 쉬움: 목표량에 다가갈수록 졸졸
+      }
+      st.poured += rate * dt;
+    }
   });
 
   // 주문 바꾸기, 참을성
@@ -336,7 +377,7 @@ function update(g, dt) {
 }
 
 const LOGIC = {
-  GRINDS, MENUS, menuOf, totalWater, DAY_LEN, WAITS, CRANKS, SWIRLS, POUR_RATE, MAX_QUEUE, MAX_HEARTS,
+  GRINDS, MODES, MENUS, menuOf, totalWater, DAY_LEN, WAITS, CRANKS, SWIRLS, POUR_RATE, MAX_QUEUE, MAX_HEARTS,
   stationCount, pourWindow, SERVE_WINDOW, unlockedMenus, patienceFor, spawnGap, stepsFor, sigOf, newGame, nextDay, spawnOrder, assign, freeStation,
   act, heat, cool, update, starsOf,
 };
