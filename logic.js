@@ -33,11 +33,16 @@ const POUR_RATE = 12;               // 초당 붓는 물(g)
 const HEAT_RATE = 6, COOL_RATE = 0.25, COOL_TAP = 3, ROOM_TEMP = 20, MAX_TEMP = 100;
 const MAX_QUEUE = 5, MAX_HEARTS = 3;
 
-const stationCount = (day) => (day >= 6 ? 3 : day >= 2 ? 2 : 1);
+// 자리는 처음부터 2개, 4일차부터 3개. 주문이 겹치면 동시에 만든다
+const stationCount = (day) => (day >= 4 ? 3 : 2);
+// 뜸 시간이 끝나고 이 시간 안에 다음 푸어를 시작하지 않으면 커피가 망가진다 (날이 갈수록 빠듯해진다)
+const pourWindow = (day) => Math.max(11, 15 - day * 0.5);
+// 마지막 푸어를 끝낸 뒤 이 시간 안에 서빙하지 않으면 식어서 못 마신다
+const SERVE_WINDOW = 22;
 const unlockedMenus = (day) => MENUS.filter((m) => m.unlockDay <= day);
 const patienceFor = (day, m) => Math.max(60, 115 - day * 6) + (m.ice ? 10 : 0);
-// 손님 사이 간격(초): 자리가 늘어나는 날(2·6일)에 맞춰 짜 두었다. 한 잔에 40~50초가 걸리니 1일차는 손님이 3명쯤만 온다
-const GAPS = [38, 28, 26, 24, 22, 20, 18, 17];
+// 손님 사이 간격(초): 한 잔에 40~50초가 걸리고 자리는 2~3개라, 1일차에도 주문이 두 개쯤 겹친다
+const GAPS = [20, 20, 19, 17, 16, 15, 14, 13];
 const spawnGap = (day) => Math.max(12, GAPS[Math.min(day, GAPS.length) - 1] - Math.max(0, day - GAPS.length) * 0.5);
 
 function stepsFor(m) {
@@ -60,11 +65,11 @@ function sigOf(m, id) {
 
 // ---------- 새 게임·하루 ----------
 function newStation() {
-  return { order: null, idx: 0, res: [], beans: 0, ice: 0, grindSel: -1, cranks: 0, rinse: 0, poured: 0, wait: 0, swirls: 0, water: 0, hold: null, holdT: 0 };
+  return { order: null, idx: 0, res: [], beans: 0, ice: 0, grindSel: -1, cranks: 0, rinse: 0, poured: 0, wait: 0, swirls: 0, water: 0, window: 0, windowSaved: 0, cold: 0, hold: null, holdT: 0 };
 }
 
 function newGame(rng = Math.random) {
-  const g = { day: 0, coins: 0, hearts: MAX_HEARTS, over: false, events: [], nextId: 1, best: { stars3: 0 }, served: 0, rng };
+  const g = { day: 0, coins: 0, hearts: MAX_HEARTS, over: false, events: [], nextId: 1, best: { stars3: 0 }, served: 0, ruined: 0, rng };
   nextDay(g);
   return g;
 }
@@ -77,7 +82,7 @@ function nextDay(g) {
   g.orders = [];
   g.stations = Array.from({ length: stationCount(g.day) }, newStation);
   g.kettle = { temp: 85, heat: false };
-  g.dayCoins = 0; g.dayServed = 0; g.dayLost = 0; g.dayStars = 0;
+  g.dayCoins = 0; g.dayServed = 0; g.dayLost = 0; g.dayStars = 0; g.dayRuined = 0;
   if (g.day > 1 && g.hearts < MAX_HEARTS) g.hearts++;
   const newMenus = MENUS.filter((m) => m.unlockDay === g.day);
   g.events.push({ type: 'day', day: g.day, newMenus: newMenus.map((m) => m.id) });
@@ -176,12 +181,12 @@ function act(g, si, name, down = true, arg) {
     if (name === 'pour') {
       const k = Number(step.slice(4)), got = st.poured, want = m.pours[k - 1];
       st.hold = null;
-      if (got < 1) return false;
+      if (got < 1) { st.window = st.windowSaved; return false; }          // 살짝 눌렀다 뗀 건 붓기로 치지 않는다: 제한 시간은 계속 간다
       const tdev = Math.abs(g.kettle.temp - m.temp);
       const tf = tdev <= 2 ? 1 : tdev <= 5 ? 0.85 : 0.6;
       const q = q3(Math.abs(got - want), 3, 8) * tf;
       st.water += got; st.poured = 0;
-      if (k < 4) st.wait = WAITS[k - 1];
+      if (k < 4) st.wait = WAITS[k - 1]; else st.cold = SERVE_WINDOW;
       finishStep(g, si, q);
       return true;
     }
@@ -219,7 +224,7 @@ function act(g, si, name, down = true, arg) {
     return false;
   }
   if (step.startsWith('pour')) {
-    if (name === 'pour' && st.wait <= 0) { st.hold = 'pour'; st.holdT = 0; st.poured = 0; return true; }
+    if (name === 'pour' && st.wait <= 0) { st.hold = 'pour'; st.holdT = 0; st.poured = 0; st.windowSaved = st.window; st.window = 0; return true; }
     return false;
   }
   if (step === 'swirl') {
@@ -251,6 +256,15 @@ function serve(g, si) {
   g.events.push({ type: 'served', order: o, menu: m, stars, coins, tip, q, station: si });
 }
 
+// 시간을 넘겨 커피를 망쳤다: 그 자리는 같은 주문을 처음부터 다시 내려야 한다 (손님 참을성은 계속 줄어든다)
+function ruin(g, si, reason) {
+  const st = g.stations[si], o = st.order;
+  const progress = st.idx;
+  g.stations[si] = Object.assign(newStation(), { order: o });
+  g.ruined++; g.dayRuined++;
+  g.events.push({ type: 'ruined', order: o, station: si, reason, progress });
+}
+
 function heat(g, on) { g.kettle.heat = !!on; }
 function cool(g) { g.kettle.temp = Math.max(ROOM_TEMP, g.kettle.temp - COOL_TAP); }
 
@@ -277,7 +291,18 @@ function update(g, dt) {
   g.stations.forEach((st, si) => {
     if (!st.order) return;
     st.order.assignedT += dt;
-    if (st.wait > 0) st.wait = Math.max(0, st.wait - dt);
+    if (st.wait > 0) {
+      st.wait = Math.max(0, st.wait - dt);
+      if (st.wait === 0) st.window = pourWindow(g.day);           // 뜸이 끝났다: 이제 정해진 시간 안에 부어야 한다
+    }
+    if (st.window > 0 && !st.hold) {
+      st.window -= dt;
+      if (st.window <= 0) { ruin(g, si, 'pour'); return; }
+    }
+    if (st.cold > 0) {
+      st.cold -= dt;
+      if (st.cold <= 0) { ruin(g, si, 'cold'); return; }
+    }
     if (!st.hold) return;
     st.holdT += dt;
     const m = menuOf(st.order.menuId);
@@ -311,7 +336,7 @@ function update(g, dt) {
 
 const LOGIC = {
   GRINDS, MENUS, menuOf, totalWater, DAY_LEN, WAITS, CRANKS, SWIRLS, POUR_RATE, MAX_QUEUE, MAX_HEARTS,
-  stationCount, unlockedMenus, patienceFor, spawnGap, stepsFor, sigOf, newGame, nextDay, spawnOrder, assign, freeStation,
+  stationCount, pourWindow, SERVE_WINDOW, unlockedMenus, patienceFor, spawnGap, stepsFor, sigOf, newGame, nextDay, spawnOrder, assign, freeStation,
   act, heat, cool, update, starsOf,
 };
 if (typeof module !== 'undefined') module.exports = LOGIC;

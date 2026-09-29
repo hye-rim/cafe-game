@@ -72,6 +72,7 @@ const sfx = {
   bad: () => tone(170, 0.16, 'square', 0.06, -50),
   crank: () => tone(240 + Math.random() * 80, 0.04, 'sawtooth', 0.05),
   served: (s) => [523, 659, 784, 1047].slice(0, 2 + s).forEach((f, i) => setTimeout(() => tone(f, 0.12, 'triangle', 0.1), i * 80)),
+  ruined: () => { tone(140, 0.35, 'sawtooth', 0.1, -80); setTimeout(() => tone(90, 0.3, 'square', 0.07, -30), 160); },
   left: () => [400, 300, 220].forEach((f, i) => setTimeout(() => tone(f, 0.16, 'sawtooth', 0.07), i * 110)),
   changed: () => [880, 660, 880].forEach((f, i) => setTimeout(() => tone(f, 0.1, 'square', 0.06), i * 90)),
   day: () => [523, 659, 784].forEach((f, i) => setTimeout(() => tone(f, 0.14, 'triangle', 0.1), i * 100)),
@@ -85,12 +86,13 @@ let focus = 0;                    // 보고 있는 자리
 let buttons = [];                 // 이번 프레임에 그려진 누를 곳
 const holds = new Map();          // 누르고 있는 손가락 → 버튼
 let texts = [], particles = [], banner = null;
+const ruinFlash = {};                // 자리 번호 → 망쳤을 때 빨갛게 번쩍이는 남은 시간
 let best = Number(store.get('cafeBest')) || 0, bestDay = Number(store.get('cafeBestDay')) || 0;
 let clock = 0;
 
 function startGame() {
   g = C.newGame(Math.random);
-  focus = 0; texts = []; particles = []; banner = null; holds.clear(); crowd.clear();
+  focus = 0; texts = []; particles = []; banner = null; holds.clear(); crowd.clear(); for (const k of Object.keys(ruinFlash)) delete ruinFlash[k];
   state = 'play';
   hideOverlay();
   updateHud();
@@ -121,6 +123,15 @@ function handleEvents() {
       for (let i = 0; i < 10; i++) { const a = Math.random() * Math.PI * 2, s = 60 + Math.random() * 100; particles.push({ x: r.x + r.w / 2, y: r.y + 30, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60, life: 0.6, col: [P.butter, P.peach, P.mint][i % 3] }); }
       sfx.served(e.stars);
       updateHud();
+    } else if (e.type === 'ruined') {
+      const r = tabRect(e.station), m = C.menuOf(e.order.menuId);
+      ruinFlash[e.station] = 1.6; focus = e.station;
+      say('☠ 망했어요', r.x + r.w / 2, r.y + 26, '#ff9a8a', 22);
+      for (let i = 0; i < 14; i++) { const a = Math.random() * Math.PI * 2, sp = 50 + Math.random() * 110; particles.push({ x: r.x + r.w / 2, y: r.y + 28, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 0.7, col: i % 2 ? '#6b3f1d' : '#3b2416' }); }
+      banner = e.reason === 'pour'
+        ? { text: '💥 커피를 망쳤어요!', sub: `뜸이 끝나고 너무 오래 뒀어요. ${m.emoji} ${m.name} 처음부터 다시!`, t: 0, bad: true }
+        : { text: '🥶 커피가 식었어요!', sub: `다 내리고 너무 오래 뒀어요. ${m.emoji} ${m.name} 처음부터 다시!`, t: 0, bad: true };
+      sfx.ruined();
     } else if (e.type === 'left') { customerLeaves(e.order, false); banner = { text: '😢 손님이 떠났어요', sub: '❤️ 하나를 잃었어요', t: 0, bad: true }; sfx.left(); }
     else if (e.type === 'changed') {
       const a = C.menuOf(e.from), b = C.menuOf(e.to);
@@ -153,6 +164,7 @@ function showSummary() {
     <div class="card"><dl class="stats">
       <dt>만든 커피</dt><dd>${g.dayServed}잔</dd>
       <dt>놓친 손님</dt><dd>${g.dayLost}명</dd>
+      <dt>망친 커피</dt><dd>${g.dayRuined}잔</dd>
       <dt>평균 별</dt><dd>${avg}</dd>
       <dt>지금까지</dt><dd>${g.coins.toLocaleString()}</dd>
     </dl></div>
@@ -176,6 +188,7 @@ function gameOver() {
       <dt>버틴 날</dt><dd>Day ${g.day}</dd>
       <dt>만든 커피</dt><dd>${g.served}잔</dd>
       <dt>별 3개</dt><dd>${g.best.stars3}잔</dd>
+      <dt>망친 커피</dt><dd>${g.ruined}잔</dd>
     </dl></div>
     <button data-act="again">다시 오픈</button>`), 700);
 }
@@ -198,7 +211,7 @@ function showBook(back) {
   showOverlay(`
     <h2 class="inked">📖 레시피북</h2>
     <div class="book">${recipeRows(day)}
-      <div class="note">핫: 테츠 카스야 4:6 방식(20g · 300g · 92°C) 참고<br>아이스: 일본식 급랭 — 얼음을 서버에 먼저 담고 그 위로 내려요<br>첫 푸어는 원두의 2배로 뜸을 들이고, 뜸 시간은 게임에서 짧게 줄였어요</div>
+      <div class="note">⏱ 뜸이 끝나고 ${Math.round(C.pourWindow(day))}초 안에 붓기 시작하지 않으면, 또 다 내리고 ${C.SERVE_WINDOW}초 안에 서빙하지 않으면 커피가 망가져 처음부터 다시!<br>핫: 테츠 카스야 4:6 방식(20g · 300g · 92°C) 참고<br>아이스: 일본식 급랭 — 얼음을 서버에 먼저 담고 그 위로 내려요<br>첫 푸어는 원두의 2배로 뜸을 들이고, 뜸 시간은 게임에서 짧게 줄였어요</div>
     </div>
     <button data-act="${back}">닫기</button>`);
 }
@@ -215,7 +228,7 @@ function showMenu() {
       🧾 주문 카드를 눌러 빈 자리에 올려요<br>
       ⚖️ 계량 → ⚙️ 분쇄 → 🌡 온도 → 🚿 린싱 → 💧 푸어 ×4<br>
       🧊 아이스는 얼음 계량과 저어주기가 더 있어요<br>
-      🔥 주전자는 모든 자리가 같이 써요. 식기 전에 다시 데워요!
+      ⏱ 뜸이 끝나고 제한 시간 안에 붓지 않으면 커피가 망가져요<br>      🔥 주전자는 모든 자리가 같이 써요. 식기 전에 다시 데워요!
     </div>`);
 }
 
@@ -516,6 +529,7 @@ function drawTabs() {
       draw: (bx, by, bw, bh) => {
         wood(bx, by, bw, bh, 14, sel ? P.butter : P.latte, sel ? '#c98f30' : P.wood, sel ? 3 : 4);
         if (sel) { ctx.lineWidth = 3.5; ctx.strokeStyle = INK; roundRect(ctx, bx + 3, by + 3, bw - 6, bh - 6, 11); ctx.stroke(); }
+        if (ruinFlash[si] > 0 && Math.sin(clock * 20) > -0.3) { ctx.fillStyle = 'rgba(255,60,45,.35)'; roundRect(ctx, bx, by, bw, bh, 14); ctx.fill(); }
         if (!o) { plain(`${si + 1}번 자리`, bx + bw / 2, by + 21, 15, P.coffee); plain('비어 있어요', bx + bw / 2, by + 40, 13, P.muted); return; }
         const m = menuOfOrder(o), steps = C.stepsFor(m);
         emoji(m.emoji, bx + 24, by + 23, 26);
@@ -525,8 +539,12 @@ function drawTabs() {
           ctx.fillStyle = i < st.idx ? '#4f9a5d' : i === st.idx ? P.berry : 'rgba(59,36,22,.3)';
           ctx.beginPath(); ctx.arc(bx + 12 + i * dotW + dotW / 2, by + 45, i === st.idx ? 3.8 : 2.8, 0, Math.PI * 2); ctx.fill();
         });
-        if (st.wait > 0) label(`${st.wait.toFixed(0)}s`, bx + bw - 10, by + 19, 15, '#bfeaff', 'right');
+        if (st.window > 0) label(`!${Math.ceil(st.window)}`, bx + bw - 10, by + 19, 17, Math.sin(clock * 12) > 0 ? '#ff5a4d' : P.cream, 'right');   // 지금 부어야 한다
+        else if (st.wait > 0) label(`${Math.ceil(st.wait)}s`, bx + bw - 10, by + 19, 15, '#bfeaff', 'right');
+        else if (st.cold > 0 && st.cold < 12) label(`❄${Math.ceil(st.cold)}`, bx + bw - 10, by + 19, 15, '#bfeaff', 'right');
         else if (st.hold) label('●', bx + bw - 10, by + 19, 15, P.berry, 'right');
+        const urgent = (st.window > 0 && st.window < 5) || (st.cold > 0 && st.cold < 7);
+        if (urgent && !sel && Math.sin(clock * 12) > 0) { ctx.lineWidth = 4; ctx.strokeStyle = '#ff3b2d'; roundRect(ctx, bx + 2, by + 2, bw - 4, bh - 4, 12); ctx.stroke(); }
       },
     });
   });
@@ -590,9 +608,19 @@ function drawPanel() {
   // 칠판 제목줄
   chalkboard(x + 14, y + 14, w - 28, 38, 10);
   chalk(title, x + 28, y + 33, 22, 'left');
-  chalk(`${m.emoji} ${m.name}`, x + w - 26, y + 33, 14, 'right', 'rgba(247,241,227,.75)');
-  wrap(hint, W / 2, y + 68, 340, 15, P.muted, 19);
-  const cy = y + 92;
+  // 제한 시간: 뜸이 끝난 뒤 붓기 시작까지 / 다 내린 뒤 서빙까지. 넘기면 커피가 망가진다
+  const lim = st.window > 0 ? { v: st.window, max: C.pourWindow(g.day), tag: '⏱ 지금 부어요' } : st.cold > 0 ? { v: st.cold, max: C.SERVE_WINDOW, tag: '❄ 식기 전에' } : null;
+  if (lim) {
+    const kk = lim.v / lim.max, hot = kk < 0.35;
+    chalk(`${lim.tag} ${lim.v.toFixed(1)}s`, x + w - 26, y + 33, 15, 'right', hot && Math.sin(clock * 12) > 0 ? '#ff8a7a' : hot ? '#ffb3a3' : P.butter);
+    ctx.fillStyle = 'rgba(59,36,22,.16)'; roundRect(ctx, x + 22, y + 56, w - 44, 7, 3.5); ctx.fill();
+    ctx.fillStyle = kk > 0.5 ? '#5aa469' : kk > 0.25 ? '#e0a02e' : '#e0402d'; roundRect(ctx, x + 22, y + 56, Math.max(7, (w - 44) * kk), 7, 3.5); ctx.fill();
+  } else if (st.wait > 0) chalk(`뜸 들이는 중 ${st.wait.toFixed(1)}s`, x + w - 26, y + 33, 14, 'right', '#bfeaff');
+  else chalk(`${m.emoji} ${m.name}`, x + w - 26, y + 33, 14, 'right', 'rgba(247,241,227,.75)');
+  const tempOff = (step === 'temp' || step.startsWith('pour')) && Math.abs(g.kettle.temp - m.temp) > 2 && step !== 'temp';
+  if (tempOff) wrap(`🌡 주전자 ${g.kettle.temp.toFixed(0)}°C — ${m.temp}°C 로 맞춰요!`, W / 2, y + 74, 340, 15, '#d9483a', 19);
+  else wrap(hint, W / 2, y + 74, 340, 15, P.muted, 19);
+  const cy = y + 96;
 
   if (step === 'beans' || step === 'ice') {
     const key = step, val = st[key], target = m[key], isBeans = step === 'beans';
@@ -639,7 +667,7 @@ function drawPanel() {
   } else if (step.startsWith('pour')) {
     const k = Number(step.slice(4)), want = m.pours[k - 1], cumTarget = m.pours.slice(0, k).reduce((a, b) => a + b, 0);
     const total = C.totalWater(m), water = st.water + st.poured;
-    const gx = x + 150, gy = cy + 30, gw = 132, gh = 168;
+    const gx = x + 150, gy = cy + 30, gw = 132, gh = 158;
     ctx.fillStyle = 'rgba(255,255,255,.75)'; roundRect(ctx, gx, gy, gw, gh, 16); ctx.fill();
     const fh = Math.min(1, water / total) * (gh - 6);
     const cg = ctx.createLinearGradient(0, gy + gh - fh, 0, gy + gh); cg.addColorStop(0, m.ice ? '#b5834f' : '#8a5a34'); cg.addColorStop(1, m.ice ? '#8a5a34' : '#4a2c17');
@@ -657,8 +685,6 @@ function drawPanel() {
     plain(`${st.poured.toFixed(0)} / ${want}g`, x + 22, cy + 74, 20, INK, 'left');
     plain('누적', x + 22, cy + 112, 14, P.muted, 'left');
     plain(`${water.toFixed(0)} / ${cumTarget}g`, x + 22, cy + 136, 17, INK, 'left');
-    const tdev = Math.abs(g.kettle.temp - m.temp);
-    if (tdev > 2) label(`🌡 ${g.kettle.temp.toFixed(0)}°C  (필요 ${m.temp}°C)`, W / 2, cy + 222, 16, '#ffb3a3');
     const waiting = st.wait > 0;
     holdBtn('pour', x + 30, y + 290, 320, 84, waiting ? `뜸 들이는 중… ${st.wait.toFixed(1)}s` : '💧 꾹 눌러 붓기', si, 'pour', { color: '#4f9db8', size: waiting ? 20 : 24, disabled: waiting });
   } else if (step === 'swirl') {
@@ -724,6 +750,7 @@ function update(dt) {
   for (const p of particles) { p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 500 * dt; }
   particles = particles.filter((p) => p.life > 0);
   for (const t of texts) { t.t += dt; t.y -= 26 * dt; }
+  for (const k of Object.keys(ruinFlash)) { ruinFlash[k] -= dt; if (ruinFlash[k] <= 0) delete ruinFlash[k]; }
   texts = texts.filter((t) => t.t < 0.9);
   if (banner) { banner.t += dt; if (banner.t > 1.9) banner = null; }
   if (state !== 'play' || !g) return;
