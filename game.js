@@ -854,6 +854,7 @@ showMenu();
 fit();
 requestAnimationFrame(frame);
 
+/* @test-hooks:start */
 // 테스트용
 window.__cf = {
   get g() { return g; }, get state() { return state; }, get focus() { return focus; }, set focus(v) { focus = v; },
@@ -863,4 +864,5 @@ window.__cf = {
   release(pid = 1) { releasePointer(pid); },
   W, H,
 };
+/* @test-hooks:end */
 })();
