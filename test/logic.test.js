@@ -105,6 +105,37 @@ test('changing an order keeps the steps that still match and redoes from the fir
   assert.strictEqual(st.res.length, st.idx);
 });
 
+test('pour quality uses the average kettle temperature while pouring, not the moment you let go', () => {
+  // 붓기 단계까지 진행해 둔 핫 주문 하나
+  const setup = () => {
+    const g = L.newGame(rng(12));
+    g.spawnT = 1e9;
+    L.spawnOrder(g);
+    L.assign(g, g.orders[0].id, 0);
+    const st = g.stations[0];
+    st.idx = L.stepsFor(L.menuOf('hot')).indexOf('pour1'); st.res = [1, 1, 1, 1];
+    g.kettle.temp = L.menuOf('hot').temp;
+    return { g, st };
+  };
+  const pour = (g, st, coolAtEnd) => {
+    const want = L.menuOf('hot').pours[0];
+    L.act(g, 0, 'pour');
+    while (st.poured < want - 0.3) L.update(g, DT);
+    if (coolAtEnd) { L.cool(g); L.cool(g); L.cool(g); }         // 다 붓고 떼기 직전에 다른 자리 때문에 9°C 식힘
+    L.act(g, 0, 'pour', false);
+    return st.res[st.res.length - 1];
+  };
+  let { g, st } = setup();
+  const steady = pour(g, st, false);
+  ({ g, st } = setup());
+  const cooledAtEnd = pour(g, st, true);
+  assert.strictEqual(steady, 1);
+  assert.strictEqual(cooledAtEnd, 1, 'cooling the kettle just before letting go no longer ruins a good pour');
+  ({ g, st } = setup());
+  g.kettle.temp = L.menuOf('hot').temp - 9;                   // 처음부터 끝까지 식은 물로 붓기
+  assert.ok(pour(g, st, false) < 0.7, 'pouring with cold water the whole time still costs');
+});
+
 // 레시피대로 정확히 내리는 자동 바리스타. 한 번에 한 동작만 한다
 function barista(g) {
   const k = g.kettle;
@@ -115,7 +146,7 @@ function barista(g) {
     if (!s) return;
     const m = L.menuOf(st.order.menuId);
     // 뜸 들이는 동안(다음 붓기까지 4초 넘게 남음)에는 온도 확인 단계에 주전자를 맞춘다
-    // 붓는 중인 자리가 있으면 그 온도를 지킨다 (점수는 붓기를 마치는 순간의 온도로 매긴다)
+    // 붓는 중인 자리가 있으면 그 온도를 지킨다 (점수는 붓는 동안의 평균 온도로 매긴다)
     const u = st.hold === 'pour' ? -Infinity : s.startsWith('pour') ? (st.wait > 0 ? st.wait : -st.window) : s === 'temp' ? 4 : Infinity;
     if (u < urgency) { urgency = u; goal = m.temp; }
   });

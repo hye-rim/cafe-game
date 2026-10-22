@@ -35,7 +35,7 @@ const MAX_QUEUE = 5, MAX_HEARTS = 3;
 
 // 자리는 처음부터 2개, 4일차부터 3개. 주문이 겹치면 동시에 만든다
 // 난이도. 보통 = 원래 난이도. 쉬움은 오차 허용을 넓히고, 목표에 가까워지면 속도를 줄여 주고(assist), 시간·참을성·하트를 넉넉히 준다.
-// beans/ice/temp/pour: [만점 오차, 그럭저럭 오차]. pourTemp: 붓는 순간 주전자 온도 오차 [괜찮음, 아쉬움] (곱해지는 점수는 pourTempMul)
+// beans/ice/temp/pour: [만점 오차, 그럭저럭 오차]. pourTemp: 붓는 동안의 평균 주전자 온도 오차 [괜찮음, 아쉬움] (곱해지는 점수는 pourTempMul)
 const MODES = {
   easy: {
     name: '쉬움', hearts: 5, beans: [1, 2.5], ice: [8, 16], temp: [2, 5], pour: [5, 12], pourTemp: [3, 7], pourTempMul: [1, 0.92, 0.8],
@@ -83,7 +83,7 @@ function sigOf(m, id) {
 
 // ---------- 새 게임·하루 ----------
 function newStation() {
-  return { order: null, idx: 0, res: [], beans: 0, ice: 0, grindSel: -1, cranks: 0, rinse: 0, poured: 0, wait: 0, swirls: 0, water: 0, window: 0, windowSaved: 0, cold: 0, hold: null, holdT: 0 };
+  return { order: null, idx: 0, res: [], beans: 0, ice: 0, grindSel: -1, cranks: 0, rinse: 0, poured: 0, pourTempSum: 0, wait: 0, swirls: 0, water: 0, window: 0, windowSaved: 0, cold: 0, hold: null, holdT: 0 };
 }
 
 function newGame(rng = Math.random, mode = 'normal') {
@@ -201,7 +201,10 @@ function act(g, si, name, down = true, arg) {
       const k = Number(step.slice(4)), got = st.poured, want = m.pours[k - 1];
       st.hold = null;
       if (got < 1) { st.window = st.windowSaved; return false; }          // 살짝 눌렀다 뗀 건 붓기로 치지 않는다: 제한 시간은 계속 간다
-      const tdev = Math.abs(g.kettle.temp - m.temp), c = g.cfg;
+      // 붓는 동안의 평균 온도로 본다. 예전엔 붓기를 마치는 순간의 온도만 봐서, 붓는 도중 다른 자리 때문에
+      // 주전자를 식히면 잘 부은 잔도 감점됐다
+      const avgTemp = st.holdT > 0 ? st.pourTempSum / st.holdT : g.kettle.temp;
+      const tdev = Math.abs(avgTemp - m.temp), c = g.cfg;
       const tf = tdev <= c.pourTemp[0] ? c.pourTempMul[0] : tdev <= c.pourTemp[1] ? c.pourTempMul[1] : c.pourTempMul[2];
       const q = q3(Math.abs(got - want), c.pour[0], c.pour[1]) * tf;
       st.water += got; st.poured = 0;
@@ -243,7 +246,7 @@ function act(g, si, name, down = true, arg) {
     return false;
   }
   if (step.startsWith('pour')) {
-    if (name === 'pour' && st.wait <= 0) { st.hold = 'pour'; st.holdT = 0; st.poured = 0; st.windowSaved = st.window; st.window = 0; return true; }
+    if (name === 'pour' && st.wait <= 0) { st.hold = 'pour'; st.holdT = 0; st.poured = 0; st.pourTempSum = 0; st.windowSaved = st.window; st.window = 0; return true; }
     return false;
   }
   if (step === 'swirl') {
@@ -335,6 +338,7 @@ function update(g, dt) {
     }
     if (!st.hold) return;
     st.holdT += dt;
+    if (st.hold === 'pour') st.pourTempSum += k.temp * dt;      // 붓는 동안의 온도를 쌓아 평균을 낸다
     const m = menuOf(st.order.menuId);
     if (st.hold === 'add') {
       const step = stepsFor(m)[st.idx];
