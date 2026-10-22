@@ -121,7 +121,10 @@ function handleEvents() {
   if (!g) return;
   for (const e of g.events.splice(0)) {
     if (e.type === 'order') sfx.bell();
-    else if (e.type === 'assign') { focus = e.station; sfx.tap(); }
+    else if (e.type === 'assign') {
+      focus = e.station; sfx.tap();
+      window.dispatchEvent(new CustomEvent('arcade:tutorial', { detail: { type: 'assign' } }));   // 오락실 튜토리얼이 '주문을 자리에 올렸다'를 알아채는 신호
+    }
     else if (e.type === 'step') {
       const [w, col] = qWord(e.q); say(w, W / 2, Y_PANEL + 60, col, 30);
       (e.q >= 0.7 ? sfx.good : sfx.bad)();
