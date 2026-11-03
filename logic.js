@@ -315,7 +315,7 @@ function update(g, dt) {
     g.spawnT -= dt;
     if (g.spawnT <= 0) {
       spawnOrder(g);
-      g.spawnT = spawnGap(g.day) * (0.8 + g.rng() * 0.4);
+      g.spawnT = spawnGap(g.day, g.cfg) * (0.8 + g.rng() * 0.4);
     }
     if (g.clock >= DAY_LEN) g.phase = 'closing';
   }

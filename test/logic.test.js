@@ -212,3 +212,11 @@ test('a perfect barista gets through the first week with three-star cups and eve
     }
   }
 });
+
+test('easy mode spaces customers wider than normal', () => {
+  const easy = L.newGame(rng(7), 'easy'), normal = L.newGame(rng(7), 'normal');
+  assert.ok(L.spawnGap(3, easy.cfg) > L.spawnGap(3, normal.cfg));
+  easy.spawnT = 0; normal.spawnT = 0; easy.phase = 'open'; normal.phase = 'open';
+  L.update(easy, 0.01); L.update(normal, 0.01);
+  assert.ok(easy.spawnT > normal.spawnT * 1.1, `${easy.spawnT} vs ${normal.spawnT}`);
+});
